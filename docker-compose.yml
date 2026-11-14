@@ -1,0 +1,85 @@
+services:
+  opspilot:
+    build:
+      context: .
+    read_only: true
+    environment:
+      OPSPILOT_CONFIG: /etc/opspilot/opspilot.json
+      OPSPILOT_INTERVAL_SECONDS: "30"
+      OPSPILOT_LOG_FILE: /var/log/opspilot/opspilot.log
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./opspilot.json:/etc/opspilot/opspilot.json:ro
+      - opspilot-logs:/var/log/opspilot
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      opspilot:
+        condition: service_healthy
+
+  loki:
+    image: grafana/loki:3.4.2
+    command:
+      - -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./observability/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+
+  alloy:
+    image: grafana/alloy:v1.7.5
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy.alloy:/etc/alloy/config.alloy:ro
+      - opspilot-logs:/var/log/opspilot:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+      - opspilot
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD before starting}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+
+volumes:
+  alloy-data:
+  grafana-data:
+  loki-data:
+  opspilot-logs:
+  prometheus-data:

@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opspilot
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opspilot-config
+  namespace: opspilot
+data:
+  opspilot.json: |
+    {
+      "checks": [
+        {
+          "name": "Example website",
+          "url": "https://example.com",
+          "timeout_seconds": 5
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opspilot
+  namespace: opspilot
+  labels:
+    app.kubernetes.io/name: opspilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opspilot
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opspilot
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8000"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: opspilot
+          image: opspilot:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: OPSPILOT_CONFIG
+              value: /etc/opspilot/opspilot.json
+            - name: OPSPILOT_INTERVAL_SECONDS
+              value: "30"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/opspilot
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 12
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: config
+          configMap:
+            name: opspilot-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opspilot
+  namespace: opspilot
+  labels:
+    app.kubernetes.io/name: opspilot
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: opspilot
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
